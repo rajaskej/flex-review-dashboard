@@ -1,18 +1,12 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { 
   Star, 
   LayoutDashboard, 
-  Home, 
-  Filter, 
-  CheckCircle, 
-  XCircle, 
   TrendingUp, 
   Users, 
   Globe, 
   MessageSquare,
   Search,
-  Menu,
-  X,
   MapPin,
   Calendar,
   ShieldCheck
@@ -24,7 +18,7 @@ import {
   getAuth, 
   signInAnonymously, 
   onAuthStateChanged,
-  signInWithCustomToken
+  User
 } from 'firebase/auth';
 import { 
   getFirestore, 
@@ -32,28 +26,21 @@ import {
   doc, 
   setDoc, 
   onSnapshot,
-  query,
-  where
+  QuerySnapshot,
+  FirestoreError
 } from 'firebase/firestore';
 
 // --- Firebase Configuration & Init ---
 const firebaseConfig = {
-
   apiKey: "AIzaSyDVSfSFr0uAvChIBQlWpICFgfeKVLlsKp4",
-
   authDomain: "flex-living-reviews-2f429.firebaseapp.com",
-
   projectId: "flex-living-reviews-2f429",
-
   storageBucket: "flex-living-reviews-2f429.firebasestorage.app",
-
   messagingSenderId: "982810576254",
-
   appId: "1:982810576254:web:34f8512b1d8ed4fb48df2f",
-
   measurementId: "G-F84Y0E8GNW"
-
 };
+
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
@@ -70,18 +57,18 @@ interface HostawayReview {
   id: number;
   type: 'guest-to-host' | 'host-to-guest';
   status: string;
-  rating: number | null; // Often null in raw hostaway, calculated from categories
+  rating: number | null; 
   publicReview: string;
   reviewCategory: ReviewCategory[];
   submittedAt: string;
   guestName: string;
   listingName: string;
-  channelName?: string; // Augmented field for multi-channel support
+  channelName?: string; 
 }
 
 interface NormalizedReview extends HostawayReview {
   calculatedRating: number;
-  isPublished: boolean; // Local state merged from Firestore
+  isPublished: boolean; 
   source: 'Hostaway' | 'Google' | 'Direct';
 }
 
@@ -105,7 +92,7 @@ const generateMockReviews = (): HostawayReview[] => {
     "We had issues with the wifi, but they fixed it quickly.",
     "Perfect for a business trip. Close to the tube.",
     "Needs a bit of a deep clean in the bathroom, but good value.",
-    "Review from Google: Great service overall.", // Simulating external source content
+    "Review from Google: Great service overall.", 
   ];
 
   const guests = ["Shane Finkelstein", "Sarah Jenkins", "Mike Ross", "Rachel Green", "Tom Hiddleston", "Emily Blunt"];
@@ -129,7 +116,7 @@ const generateMockReviews = (): HostawayReview[] => {
       submittedAt: new Date(Date.now() - Math.random() * 10000000000).toISOString().replace('T', ' ').split('.')[0],
       guestName: guests[i % guests.length],
       listingName: MOCK_LISTINGS[i % MOCK_LISTINGS.length],
-      channelName: Math.random() > 0.8 ? 'Google' : 'Airbnb' // Simulating source mix
+      channelName: Math.random() > 0.8 ? 'Google' : 'Airbnb' 
     });
   }
   return reviews;
@@ -537,20 +524,20 @@ const PublicPropertyPage = ({ reviews, goBack }: { reviews: NormalizedReview[], 
 // --- Main App Controller ---
 
 export default function FlexLivingApp() {
-  const [user, setUser] = useState<any>(null);
+  const [user, setUser] = useState<User | null>(null);
   const [reviews, setReviews] = useState<NormalizedReview[]>([]);
   const [view, setView] = useState('dashboard');
   const [loading, setLoading] = useState(true);
 
   // 1. Authentication
   useEffect(() => {
-  const initAuth = async () => {
-    // Simple anonymous sign-in for your Vercel deployment
-    await signInAnonymously(auth);
-  };
-  initAuth();
-  const unsubscribe = onAuthStateChanged(auth, (u) => setUser(u));
-  return () => unsubscribe();
+    const initAuth = async () => {
+      // Simple anonymous sign-in for your Vercel deployment
+      await signInAnonymously(auth);
+    };
+    initAuth();
+    const unsubscribe = onAuthStateChanged(auth, (u: User | null) => setUser(u));
+    return () => unsubscribe();
   }, []);
 
   // 2. Fetch Reviews + Sync with Firestore
@@ -566,9 +553,9 @@ export default function FlexLivingApp() {
       // Setup listener for Published status in Firestore
       const publishedRef = collection(db, 'artifacts', appId, 'public', 'data', 'flex_reviews');
       
-      const unsubscribe = onSnapshot(publishedRef, (snapshot) => {
+      const unsubscribe = onSnapshot(publishedRef, (snapshot: QuerySnapshot) => {
         const publishedMap = new Map();
-        snapshot.docs.forEach(doc => {
+        snapshot.docs.forEach((doc: any) => {
           publishedMap.set(parseInt(doc.id), doc.data().isPublished);
         });
 
@@ -585,7 +572,7 @@ export default function FlexLivingApp() {
 
         setReviews(mergedReviews);
         setLoading(false);
-      }, (error) => {
+      }, (error: FirestoreError) => {
         console.error("Firestore sync error:", error);
         setLoading(false);
       });
