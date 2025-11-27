@@ -3,13 +3,17 @@ import {
   Star, 
   LayoutDashboard, 
   TrendingUp, 
+  TrendingDown,
   Users, 
   Globe, 
   MessageSquare,
   Search,
   MapPin,
   Calendar,
-  ShieldCheck
+  ShieldCheck,
+  Filter,
+  ArrowUpDown,
+  AlertCircle
 } from 'lucide-react';
 import { 
   initializeApp 
@@ -19,7 +23,7 @@ import {
   signInAnonymously, 
   onAuthStateChanged
 } from 'firebase/auth';
-import type { User } from 'firebase/auth'; // FIXED: Type-only import
+import type { User } from 'firebase/auth';
 import { 
   getFirestore, 
   collection, 
@@ -28,7 +32,7 @@ import {
   onSnapshot,
   FirestoreError
 } from 'firebase/firestore';
-import type { QuerySnapshot } from 'firebase/firestore'; // FIXED: Type-only import
+import type { QuerySnapshot } from 'firebase/firestore';
 
 // --- Firebase Configuration & Init ---
 const firebaseConfig = {
@@ -93,14 +97,17 @@ const generateMockReviews = (): HostawayReview[] => {
     "Perfect for a business trip. Close to the tube.",
     "Needs a bit of a deep clean in the bathroom, but good value.",
     "Review from Google: Great service overall.", 
+    "Direct feedback: We loved the concierge service!",
   ];
 
-  const guests = ["Shane Finkelstein", "Sarah Jenkins", "Mike Ross", "Rachel Green", "Tom Hiddleston", "Emily Blunt"];
+  const guests = ["Shane Finkelstein", "Sarah Jenkins", "Mike Ross", "Rachel Green", "Tom Hiddleston", "Emily Blunt", "John Doe", "Jane Smith"];
 
-  for (let i = 0; i < 25; i++) {
+  for (let i = 0; i < 45; i++) {
     const isGood = Math.random() > 0.3;
     const baseRating = isGood ? 9 : 6;
-    
+    const rand = Math.random();
+    const channel = rand > 0.8 ? 'Google' : rand > 0.6 ? 'Direct' : 'Airbnb';
+
     reviews.push({
       id: startId + i,
       type: 'guest-to-host',
@@ -113,10 +120,10 @@ const generateMockReviews = (): HostawayReview[] => {
         { category: "respect_house_rules", rating: 10 },
         { category: "location", rating: baseRating + 1 }
       ],
-      submittedAt: new Date(Date.now() - Math.random() * 10000000000).toISOString().replace('T', ' ').split('.')[0],
+      submittedAt: new Date(Date.now() - Math.random() * 90 * 24 * 60 * 60 * 1000).toISOString().replace('T', ' ').split('.')[0], // Last 90 days
       guestName: guests[i % guests.length],
       listingName: MOCK_LISTINGS[i % MOCK_LISTINGS.length],
-      channelName: Math.random() > 0.8 ? 'Google' : 'Airbnb' 
+      channelName: channel
     });
   }
   return reviews;
@@ -165,7 +172,7 @@ const Sidebar = ({ currentView, setView }: { currentView: string, setView: (v: s
       <div className="flex items-center space-x-3 px-4 py-3 text-slate-400 cursor-not-allowed opacity-70">
         <div className="w-5 h-5 rounded-full bg-white flex items-center justify-center text-black font-bold text-[10px]">G</div>
         <span>Google Reviews</span>
-        <span className="ml-auto text-[10px] bg-slate-800 px-1 rounded text-emerald-400">Active</span>
+        <span className="ml-auto text-[10px] bg-emerald-900 text-emerald-400 px-1 rounded border border-emerald-800">Synced</span>
       </div>
     </nav>
     <div className="p-4 border-t border-slate-800">
@@ -186,34 +193,107 @@ const Sidebar = ({ currentView, setView }: { currentView: string, setView: (v: s
 const ManagerDashboard = ({ reviews, togglePublish }: { reviews: NormalizedReview[], togglePublish: (id: number, current: boolean) => void }) => {
   const [filterListing, setFilterListing] = useState<string>('All');
   const [filterRating, setFilterRating] = useState<string>('All');
+  const [filterChannel, setFilterChannel] = useState<string>('All');
+  const [filterCategory, setFilterCategory] = useState<string>('All');
+  const [sortOrder, setSortOrder] = useState<string>('Newest');
   const [search, setSearch] = useState('');
 
-  // Derived Statistics
+  // Derived Statistics (Reactive to Listing Filter)
   const stats = useMemo(() => {
-    const total = reviews.length;
-    const avgRating = reviews.reduce((acc, r) => acc + r.calculatedRating, 0) / total || 0;
-    const publishedCount = reviews.filter(r => r.isPublished).length;
-    const googleCount = reviews.filter(r => r.channelName === 'Google').length;
-    return { total, avgRating: avgRating.toFixed(1), publishedCount, googleCount };
-  }, [reviews]);
+    // 1. Filter by listing first to get "Per Property" stats
+    const propertyReviews = filterListing === 'All' 
+      ? reviews 
+      : reviews.filter(r => r.listingName === filterListing);
 
-  // Filter Logic
-  const filteredReviews = reviews.filter(r => {
-    const matchesListing = filterListing === 'All' || r.listingName === filterListing;
-    const matchesRating = filterRating === 'All' 
-      ? true 
-      : filterRating === 'High' ? r.calculatedRating >= 9 
-      : r.calculatedRating < 7;
-    const matchesSearch = r.publicReview.toLowerCase().includes(search.toLowerCase()) || r.guestName.toLowerCase().includes(search.toLowerCase());
-    return matchesListing && matchesRating && matchesSearch;
-  });
+    const total = propertyReviews.length;
+    const avgRating = total > 0 
+      ? propertyReviews.reduce((acc, r) => acc + r.calculatedRating, 0) / total 
+      : 0;
+    
+    // Trend Logic: Compare last 30 days vs previous 30 days
+    const now = new Date();
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const sixtyDaysAgo = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
+
+    const recentReviews = propertyReviews.filter(r => new Date(r.submittedAt) >= thirtyDaysAgo);
+    const previousReviews = propertyReviews.filter(r => {
+      const d = new Date(r.submittedAt);
+      return d >= sixtyDaysAgo && d < thirtyDaysAgo;
+    });
+
+    const recentAvg = recentReviews.length > 0 ? recentReviews.reduce((acc, r) => acc + r.calculatedRating, 0) / recentReviews.length : 0;
+    const prevAvg = previousReviews.length > 0 ? previousReviews.reduce((acc, r) => acc + r.calculatedRating, 0) / previousReviews.length : 0;
+    const trendDiff = recentAvg - prevAvg;
+
+    // Recurring Issues Logic: Find lowest category score average
+    const categories: Record<string, { sum: number, count: number }> = {};
+    propertyReviews.forEach(r => {
+      r.reviewCategory.forEach(cat => {
+        if (!categories[cat.category]) categories[cat.category] = { sum: 0, count: 0 };
+        categories[cat.category].sum += cat.rating;
+        categories[cat.category].count += 1;
+      });
+    });
+
+    let lowestCategoryName = 'None';
+    let lowestCategoryScore = 10;
+
+    Object.entries(categories).forEach(([name, data]) => {
+      const avg = data.sum / data.count;
+      if (avg < lowestCategoryScore) {
+        lowestCategoryScore = avg;
+        lowestCategoryName = name;
+      }
+    });
+
+    return { 
+      total, 
+      avgRating: avgRating.toFixed(1), 
+      trendDiff,
+      lowestCategoryName,
+      lowestCategoryScore: lowestCategoryScore.toFixed(1)
+    };
+  }, [reviews, filterListing]);
+
+  // Filter Logic (Applied to Table)
+  const filteredReviews = useMemo(() => {
+    let result = reviews.filter(r => {
+      const matchesListing = filterListing === 'All' || r.listingName === filterListing;
+      const matchesChannel = filterChannel === 'All' || r.channelName === filterChannel;
+      const matchesRating = filterRating === 'All' 
+        ? true 
+        : filterRating === 'High' ? r.calculatedRating >= 9 
+        : r.calculatedRating < 7;
+      
+      // Category Issue Filter
+      const matchesCategory = filterCategory === 'All' 
+        ? true
+        : r.reviewCategory.some(c => c.category === filterCategory && c.rating < 7);
+
+      const matchesSearch = r.publicReview.toLowerCase().includes(search.toLowerCase()) || r.guestName.toLowerCase().includes(search.toLowerCase());
+      return matchesListing && matchesRating && matchesSearch && matchesChannel && matchesCategory;
+    });
+
+    // Sort Logic
+    result.sort((a, b) => {
+      if (sortOrder === 'Newest') return new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime();
+      if (sortOrder === 'Oldest') return new Date(a.submittedAt).getTime() - new Date(b.submittedAt).getTime();
+      if (sortOrder === 'Highest') return b.calculatedRating - a.calculatedRating;
+      if (sortOrder === 'Lowest') return a.calculatedRating - b.calculatedRating;
+      return 0;
+    });
+
+    return result;
+  }, [reviews, filterListing, filterRating, filterChannel, filterCategory, sortOrder, search]);
 
   return (
     <div className="p-4 md:p-8 bg-slate-50 min-h-screen">
       {/* Header Stats */}
       <div className="mb-8">
         <h2 className="text-3xl font-bold text-slate-800">Reviews Overview</h2>
-        <p className="text-slate-500 mt-1">Monitor listing performance and moderate public reviews.</p>
+        <p className="text-slate-500 mt-1">
+          {filterListing === 'All' ? 'Performance across all properties.' : `Performance for ${filterListing}`}
+        </p>
         
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-6">
           <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
@@ -226,8 +306,9 @@ const ManagerDashboard = ({ reviews, togglePublish }: { reviews: NormalizedRevie
                 <Star size={20} fill="currentColor" />
               </div>
             </div>
-            <div className="mt-2 text-xs text-emerald-600 font-medium flex items-center">
-              <TrendingUp size={12} className="mr-1" /> +0.2 this month
+            <div className={`mt-2 text-xs font-medium flex items-center ${stats.trendDiff >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+              {stats.trendDiff >= 0 ? <TrendingUp size={12} className="mr-1" /> : <TrendingDown size={12} className="mr-1" />}
+              {stats.trendDiff > 0 ? '+' : ''}{stats.trendDiff.toFixed(2)} this month
             </div>
           </div>
 
@@ -241,38 +322,47 @@ const ManagerDashboard = ({ reviews, togglePublish }: { reviews: NormalizedRevie
                 <MessageSquare size={20} />
               </div>
             </div>
+            <div className="mt-2 text-xs text-slate-400">
+              Across selected listings
+            </div>
           </div>
 
           <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-slate-500 font-medium">Published</p>
-                <p className="text-3xl font-bold text-slate-800 mt-1">{stats.publishedCount}</p>
+                <p className="text-sm text-slate-500 font-medium">Attention Needed</p>
+                <p className="text-lg font-bold text-slate-800 mt-1 capitalize">{stats.lowestCategoryName}</p>
               </div>
-              <div className="w-10 h-10 bg-purple-100 rounded-full flex items-center justify-center text-purple-600">
-                <Globe size={20} />
+              <div className="w-10 h-10 bg-orange-100 rounded-full flex items-center justify-center text-orange-600">
+                <AlertCircle size={20} />
               </div>
+            </div>
+            <div className="mt-2 text-xs text-orange-600 font-medium">
+              Lowest avg. score: {stats.lowestCategoryScore}
             </div>
           </div>
 
            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-slate-500 font-medium">From Google</p>
-                <p className="text-3xl font-bold text-slate-800 mt-1">{stats.googleCount}</p>
+                <p className="text-sm text-slate-500 font-medium">Google Sync</p>
+                <p className="text-lg font-bold text-slate-800 mt-1">Active</p>
               </div>
-              <div className="w-10 h-10 bg-orange-100 rounded-full flex items-center justify-center text-orange-600">
+              <div className="w-10 h-10 bg-blue-50 rounded-full flex items-center justify-center text-blue-600">
                 <span className="font-bold">G</span>
               </div>
+            </div>
+            <div className="mt-2 text-xs text-slate-400">
+              Last synced: Just now
             </div>
           </div>
         </div>
       </div>
 
       {/* Filters & Actions */}
-      <div className="bg-white rounded-t-xl border border-slate-200 p-4 flex flex-col md:flex-row md:items-center justify-between space-y-4 md:space-y-0">
-        <div className="flex items-center space-x-2 w-full md:w-auto">
-          <div className="relative w-full md:w-64">
+      <div className="bg-white rounded-t-xl border border-slate-200 p-4 flex flex-col xl:flex-row xl:items-center justify-between space-y-4 xl:space-y-0">
+        <div className="flex items-center space-x-2 w-full xl:w-auto">
+          <div className="relative w-full xl:w-64">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" size={16} />
             <input 
               type="text" 
@@ -284,25 +374,73 @@ const ManagerDashboard = ({ reviews, togglePublish }: { reviews: NormalizedRevie
           </div>
         </div>
         
-        <div className="flex items-center space-x-3 overflow-x-auto pb-2 md:pb-0">
-          <select 
-            value={filterListing}
-            onChange={(e) => setFilterListing(e.target.value)}
-            className="px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white text-slate-700 focus:outline-none"
-          >
-            <option value="All">All Listings</option>
-            {MOCK_LISTINGS.map(l => <option key={l} value={l}>{l.substring(0, 20)}...</option>)}
-          </select>
+        <div className="flex flex-wrap items-center gap-3">
+           <div className="flex items-center space-x-2 bg-slate-50 px-3 py-2 rounded-lg border border-slate-200">
+             <Filter size={14} className="text-slate-500"/>
+             <select 
+              value={filterListing}
+              onChange={(e) => setFilterListing(e.target.value)}
+              className="text-sm bg-transparent text-slate-700 focus:outline-none min-w-[120px]"
+            >
+              <option value="All">All Listings</option>
+              {MOCK_LISTINGS.map(l => <option key={l} value={l}>{l.substring(0, 20)}...</option>)}
+            </select>
+           </div>
 
-          <select 
-            value={filterRating}
-            onChange={(e) => setFilterRating(e.target.value)}
-            className="px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white text-slate-700 focus:outline-none"
-          >
-            <option value="All">All Ratings</option>
-            <option value="High">High (9+)</option>
-            <option value="Low">Attention Needed (&lt;7)</option>
-          </select>
+           <div className="flex items-center space-x-2 bg-slate-50 px-3 py-2 rounded-lg border border-slate-200">
+             <AlertCircle size={14} className="text-slate-500"/>
+             <select 
+              value={filterCategory}
+              onChange={(e) => setFilterCategory(e.target.value)}
+              className="text-sm bg-transparent text-slate-700 focus:outline-none"
+            >
+              <option value="All">All Categories</option>
+              <option value="cleanliness">Cleanliness Issues</option>
+              <option value="communication">Communication Issues</option>
+              <option value="location">Location Issues</option>
+            </select>
+           </div>
+
+           <div className="flex items-center space-x-2 bg-slate-50 px-3 py-2 rounded-lg border border-slate-200">
+             <Star size={14} className="text-slate-500"/>
+             <select 
+              value={filterRating}
+              onChange={(e) => setFilterRating(e.target.value)}
+              className="text-sm bg-transparent text-slate-700 focus:outline-none"
+            >
+              <option value="All">All Ratings</option>
+              <option value="High">High (9+)</option>
+              <option value="Low">Low (&lt;7)</option>
+            </select>
+           </div>
+
+           <div className="flex items-center space-x-2 bg-slate-50 px-3 py-2 rounded-lg border border-slate-200">
+             <Globe size={14} className="text-slate-500"/>
+             <select 
+              value={filterChannel}
+              onChange={(e) => setFilterChannel(e.target.value)}
+              className="text-sm bg-transparent text-slate-700 focus:outline-none"
+            >
+              <option value="All">All Channels</option>
+              <option value="Airbnb">Airbnb</option>
+              <option value="Google">Google</option>
+              <option value="Direct">Direct</option>
+            </select>
+           </div>
+
+           <div className="flex items-center space-x-2 bg-slate-50 px-3 py-2 rounded-lg border border-slate-200 ml-auto xl:ml-2">
+             <ArrowUpDown size={14} className="text-slate-500"/>
+             <select 
+              value={sortOrder}
+              onChange={(e) => setSortOrder(e.target.value)}
+              className="text-sm bg-transparent text-slate-700 focus:outline-none"
+            >
+              <option value="Newest">Newest First</option>
+              <option value="Oldest">Oldest First</option>
+              <option value="Highest">Highest Rated</option>
+              <option value="Lowest">Lowest Rated</option>
+            </select>
+           </div>
         </div>
       </div>
 
@@ -326,7 +464,9 @@ const ManagerDashboard = ({ reviews, togglePublish }: { reviews: NormalizedRevie
                     <div className="font-medium text-slate-900">{review.guestName}</div>
                     <div className="text-xs text-slate-500 mt-1">{formatDate(review.submittedAt)}</div>
                     <div className="mt-2 inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-600 border border-slate-200">
-                      {review.channelName === 'Google' ? <span className="mr-1 text-blue-500 font-bold">G</span> : null}
+                      {review.channelName === 'Google' ? <span className="mr-1 text-blue-500 font-bold">G</span> : 
+                       review.channelName === 'Airbnb' ? <span className="mr-1 text-red-500 font-bold">A</span> : 
+                       <span className="mr-1 text-emerald-500 font-bold">D</span>}
                       {review.channelName || 'Direct'}
                     </div>
                   </td>
@@ -348,7 +488,7 @@ const ManagerDashboard = ({ reviews, togglePublish }: { reviews: NormalizedRevie
                     <div className="mt-1 text-xs text-slate-400 space-y-0.5">
                       {review.reviewCategory.slice(0,2).map((cat, i) => (
                         <div key={i} className="flex justify-between">
-                          <span className="capitalize">{cat.category}</span>
+                          <span className={`capitalize ${cat.rating < 7 ? 'text-red-500 font-bold' : ''}`}>{cat.category}</span>
                           <span>{cat.rating}</span>
                         </div>
                       ))}
@@ -567,7 +707,7 @@ export default function FlexLivingApp() {
           source: r.channelName === 'Google' ? 'Google' : 'Hostaway'
         }));
         
-        // Sort by date desc
+        // Initial Sort (Newest)
         mergedReviews.sort((a,b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
 
         setReviews(mergedReviews);
