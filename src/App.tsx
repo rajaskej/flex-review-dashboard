@@ -17,18 +17,18 @@ import {
 import { 
   getAuth, 
   signInAnonymously, 
-  onAuthStateChanged,
-  User
+  onAuthStateChanged
 } from 'firebase/auth';
+import type { User } from 'firebase/auth'; // FIXED: Type-only import
 import { 
   getFirestore, 
   collection, 
   doc, 
   setDoc, 
   onSnapshot,
-  QuerySnapshot,
   FirestoreError
 } from 'firebase/firestore';
+import type { QuerySnapshot } from 'firebase/firestore'; // FIXED: Type-only import
 
 // --- Firebase Configuration & Init ---
 const firebaseConfig = {
