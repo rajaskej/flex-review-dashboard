@@ -76,7 +76,7 @@ interface NormalizedReview extends HostawayReview {
   source: 'Hostaway' | 'Google' | 'Direct';
 }
 
-// --- Mock Data Generation (Simulating Hostaway API) ---
+// --- Mock Data Generation (Fallback) ---
 
 const MOCK_LISTINGS = [
   "2B N1 A - 29 Shoreditch Heights",
@@ -198,9 +198,8 @@ const ManagerDashboard = ({ reviews, togglePublish }: { reviews: NormalizedRevie
   const [sortOrder, setSortOrder] = useState<string>('Newest');
   const [search, setSearch] = useState('');
 
-  // Derived Statistics (Reactive to Listing Filter)
+  // Derived Statistics
   const stats = useMemo(() => {
-    // 1. Filter by listing first to get "Per Property" stats
     const propertyReviews = filterListing === 'All' 
       ? reviews 
       : reviews.filter(r => r.listingName === filterListing);
@@ -210,7 +209,7 @@ const ManagerDashboard = ({ reviews, togglePublish }: { reviews: NormalizedRevie
       ? propertyReviews.reduce((acc, r) => acc + r.calculatedRating, 0) / total 
       : 0;
     
-    // Trend Logic: Compare last 30 days vs previous 30 days
+    // Trend Logic
     const now = new Date();
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
     const sixtyDaysAgo = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
@@ -225,7 +224,7 @@ const ManagerDashboard = ({ reviews, togglePublish }: { reviews: NormalizedRevie
     const prevAvg = previousReviews.length > 0 ? previousReviews.reduce((acc, r) => acc + r.calculatedRating, 0) / previousReviews.length : 0;
     const trendDiff = recentAvg - prevAvg;
 
-    // Recurring Issues Logic: Find lowest category score average
+    // Recurring Issues Logic
     const categories: Record<string, { sum: number, count: number }> = {};
     propertyReviews.forEach(r => {
       r.reviewCategory.forEach(cat => {
@@ -255,7 +254,7 @@ const ManagerDashboard = ({ reviews, togglePublish }: { reviews: NormalizedRevie
     };
   }, [reviews, filterListing]);
 
-  // Filter Logic (Applied to Table)
+  // Filter Logic
   const filteredReviews = useMemo(() => {
     let result = reviews.filter(r => {
       const matchesListing = filterListing === 'All' || r.listingName === filterListing;
@@ -265,7 +264,6 @@ const ManagerDashboard = ({ reviews, togglePublish }: { reviews: NormalizedRevie
         : filterRating === 'High' ? r.calculatedRating >= 9 
         : r.calculatedRating < 7;
       
-      // Category Issue Filter
       const matchesCategory = filterCategory === 'All' 
         ? true
         : r.reviewCategory.some(c => c.category === filterCategory && c.rating < 7);
@@ -274,7 +272,6 @@ const ManagerDashboard = ({ reviews, togglePublish }: { reviews: NormalizedRevie
       return matchesListing && matchesRating && matchesSearch && matchesChannel && matchesCategory;
     });
 
-    // Sort Logic
     result.sort((a, b) => {
       if (sortOrder === 'Newest') return new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime();
       if (sortOrder === 'Oldest') return new Date(a.submittedAt).getTime() - new Date(b.submittedAt).getTime();
@@ -687,8 +684,22 @@ export default function FlexLivingApp() {
     // Simulate API Fetch
     const fetchData = async () => {
       setLoading(true);
-      // Generate mock Hostaway Data
-      const apiReviews = generateMockReviews();
+
+      let apiReviews: HostawayReview[] = [];
+
+      try {
+        // Try fetching from the Vercel Serverless Function
+        const response = await fetch('/api/reviews');
+        if (response.ok) {
+          apiReviews = await response.json();
+        } else {
+          console.warn("API failed/not deployed, falling back to mock data");
+          apiReviews = generateMockReviews();
+        }
+      } catch (e) {
+        console.warn("Network error or local dev, falling back to mock data", e);
+        apiReviews = generateMockReviews();
+      }
       
       // Setup listener for Published status in Firestore
       const publishedRef = collection(db, 'artifacts', appId, 'public', 'data', 'flex_reviews');
